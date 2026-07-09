@@ -1,0 +1,15 @@
+=========================================
+PERINTY SUPPORT KNOWLEDGE BASE
+=========================================
+
+What is Perinty?
+Perinty is a cutting-edge platform designed to help freelancers build modern software portfolios and showcase their skills to clients on Upwork. It features tools for automations, custom dashboards, and AI RAG pipelines.
+
+Who is the founder of Perinty?
+Perinty was founded by a talented team of remote full-stack engineers in 2026 to help close the gap between software developers and remote contract opportunities.
+
+What is the refund policy?
+Perinty offers a 14-day money-back guarantee for all paid subscription plans. Refund requests must be sent directly to billing@perinty.com.
+
+How do I connect my Stripe account?
+To connect Stripe, navigate to Settings > Integrations, click the "Connect Stripe" button, and follow the Stripe Connect oauth prompts.
