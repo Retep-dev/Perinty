@@ -1,9 +1,8 @@
 fastapi
 uvicorn
-google-generativeai
 python-multipart
 python-dotenv
 supabase
 llama-index-core
-llama-index-llms-google-genai
-llama-index-embeddings-google-genai
+llama-index-llms-nvidia
+llama-index-embeddings-nvidia

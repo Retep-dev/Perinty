@@ -136,7 +136,7 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
         
         <div className="flex items-center gap-1 text-slate-400 text-xs bg-slate-900 px-3 py-1.5 rounded-full border border-slate-800">
           <Sparkles size={12} className="text-indigo-400" />
-          <span>Gemini-1.5-Flash</span>
+          <span>Llama 3.1 8B</span>
         </div>
       </div>
 

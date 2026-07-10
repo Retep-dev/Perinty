@@ -1,15 +1,15 @@
 import os
 import json
 from typing import List, Dict, Any, Generator
-from app.config import GEMINI_API_KEY, SUPABASE_URL, SUPABASE_KEY, CHUNK_SIZE, CHUNK_OVERLAP
+from app.config import NVIDIA_API_KEY, SUPABASE_URL, SUPABASE_KEY, CHUNK_SIZE, CHUNK_OVERLAP
 from supabase import create_client, Client
 
-# Configure Gemini Generative AI SDK environment variable
-if GEMINI_API_KEY:
-    os.environ["GOOGLE_API_KEY"] = GEMINI_API_KEY
-    print("GOOGLE_API_KEY environment variable configured.")
+# Configure NVIDIA API key environment variable
+if NVIDIA_API_KEY:
+    os.environ["NVIDIA_API_KEY"] = NVIDIA_API_KEY
+    print("NVIDIA_API_KEY environment variable configured.")
 else:
-    print("WARNING: GEMINI_API_KEY is not set.")
+    print("WARNING: NVIDIA_API_KEY is not set.")
 
 # Supabase Client Setup
 supabase_client: Client = None
@@ -25,16 +25,14 @@ from llama_index.core import Settings, VectorStoreIndex, StorageContext, Documen
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.vector_stores.types import BasePydanticVectorStore, VectorStoreQuery, VectorStoreQueryResult
 from llama_index.core.schema import TextNode, BaseNode, MetadataMode
-from llama_index.llms.google_genai import GoogleGenAI
-from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
+from llama_index.llms.nvidia import NVIDIA
+from llama_index.embeddings.nvidia import NVIDIAEmbedding
 
 # Configure LlamaIndex global Settings
-if GEMINI_API_KEY:
-    # Use GoogleGenAI with Gemini 3.5 Flash
-    Settings.llm = GoogleGenAI(model="models/gemini-3.5-flash", api_key=GEMINI_API_KEY)
-    # Use GoogleGenAIEmbedding with Gemini embedding model
-    Settings.embed_model = GoogleGenAIEmbedding(model_name="models/gemini-embedding-001", api_key=GEMINI_API_KEY)
-    print("LlamaIndex global settings configured with Gemini LLM and Embedding models.")
+if NVIDIA_API_KEY:
+    Settings.llm = NVIDIA(model="meta/llama-3.1-8b-instruct", api_key=NVIDIA_API_KEY)
+    Settings.embed_model = NVIDIAEmbedding(model="nvidia/nv-embedqa-e5-v5", api_key=NVIDIA_API_KEY)
+    print("LlamaIndex global settings configured with NVIDIA LLM and Embedding models.")
 
 # Custom Pydantic-based Supabase Vector Store
 class SupabaseHTTPVectorStore(BasePydanticVectorStore):
@@ -136,8 +134,8 @@ def ingest_document(file_name: str, text_content: str) -> Dict[str, Any]:
     Parses, chunks, embeds, and stores the text content using LlamaIndex.
     Returns status and number of chunks ingested.
     """
-    if not GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY is not set. Cannot run embedding pipeline.")
+    if not NVIDIA_API_KEY:
+        raise ValueError("NVIDIA_API_KEY is not set. Cannot run embedding pipeline.")
 
     # 1. Wrap content in LlamaIndex Document
     doc = Document(text=text_content, metadata={"file_name": file_name})
@@ -176,8 +174,8 @@ def generate_streaming_response(query_text: str) -> Generator[str, None, None]:
     RAG Query flow with streaming response generator using LlamaIndex.
     Yields chunks of text responses, ending with a JSON block of sources.
     """
-    if not GEMINI_API_KEY:
-        yield "Error: Gemini API key is not configured. Please verify your environment settings."
+    if not NVIDIA_API_KEY:
+        yield "Error: NVIDIA API key is not configured. Please verify your environment settings."
         return
 
     try:

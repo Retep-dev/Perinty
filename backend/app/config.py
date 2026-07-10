@@ -4,8 +4,8 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Gemini API Configuration
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+# NVIDIA NIM API Configuration
+NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 
 # Supabase Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")

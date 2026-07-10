@@ -4,7 +4,8 @@ import DocumentUploader from './components/DocumentUploader'
 import ChatWindow from './components/ChatWindow'
 
 export default function App() {
-  const backendUrl = 'http://localhost:8000'
+  const backendUrl = '/api'
+
   const [activeDocument, setActiveDocument] = useState(null)
   const [resetting, setResetting] = useState(false)
 
@@ -94,11 +95,11 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-300">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400"></div>
-                <span>Embedding Model: Gemini text-embedding-004</span>
+                <span>Embedding Model: nvidia/nv-embedqa-e5-v5</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-300">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400"></div>
-                <span>LLM Generation: Gemini-1.5-Flash</span>
+                <span>LLM Generation: meta/llama-3.1-8b-instruct</span>
               </div>
             </div>
           </div>
