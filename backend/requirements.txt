@@ -6,3 +6,9 @@ supabase
 llama-index-core
 llama-index-llms-nvidia
 llama-index-embeddings-nvidia
+pymupdf
+python-docx
+beautifulsoup4
+pandas
+langfuse
+llama-index-callbacks-langfuse

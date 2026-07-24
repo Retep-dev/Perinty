@@ -1,17 +1,27 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, CornerDownLeft, Sparkles, HelpCircle, FileText } from 'lucide-react'
+import { Send, Bot, User, CornerDownLeft, Sparkles, FileText } from 'lucide-react'
 
-export default function ChatWindow({ backendUrl, activeDocument }) {
+export default function ChatWindow({ backendUrl, activeDocument, userId, setUserId }) {
+  const [sessionId] = useState(() => {
+    // Reuse session id across refreshes for the same browser tab session
+    const existing = sessionStorage.getItem('perinty_session_id')
+    if (existing) return existing
+    const fresh = crypto.randomUUID()
+    sessionStorage.setItem('perinty_session_id', fresh)
+    return fresh
+  })
+
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
       role: 'assistant',
-      content: 'Hello! I am your Support Assistant. Upload your documentation in the sidebar, and I will answer questions strictly based on the content.',
+      content: 'Hello! I am your Support Assistant. Upload your documentation in the sidebar, and I will answer questions strictly based on the content. Enter your User ID above to start.',
     }
   ])
   const [input, setInput] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
-  
+  const [historyLoaded, setHistoryLoaded] = useState(false)
+
   const messagesEndRef = useRef(null)
 
   const scrollToBottom = () => {
@@ -22,9 +32,52 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
     scrollToBottom()
   }, [messages, isGenerating])
 
+  // Load chat history when userId changes
+  useEffect(() => {
+    if (!userId.trim()) {
+      setHistoryLoaded(false)
+      return
+    }
+
+    const loadHistory = async () => {
+      try {
+        const response = await fetch(
+          `${backendUrl}/chat/history/${encodeURIComponent(userId)}?session_id=${encodeURIComponent(sessionId)}`
+        )
+        if (response.ok) {
+          const data = await response.json()
+          const history = (data.messages || []).map((msg) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content,
+            sources: msg.sources || [],
+          }))
+          setMessages([
+            {
+              id: 'welcome',
+              role: 'assistant',
+              content: `Welcome back, ${userId}. Continuing session ${sessionId.slice(0, 8)}...`,
+            },
+            ...history,
+          ])
+        }
+      } catch (err) {
+        console.error('Failed to load chat history', err)
+      } finally {
+        setHistoryLoaded(true)
+      }
+    }
+
+    loadHistory()
+  }, [userId, sessionId, backendUrl])
+
   const handleSend = async (e) => {
     e.preventDefault()
     if (!input.trim() || isGenerating) return
+    if (!userId.trim()) {
+      alert('Please enter a User ID above the chat.')
+      return
+    }
 
     const userMessageText = input.trim()
     setInput('')
@@ -50,7 +103,11 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ message: userMessageText }),
+        body: JSON.stringify({
+          message: userMessageText,
+          user_id: userId,
+          session_id: sessionId,
+        }),
       })
 
       if (!response.ok) {
@@ -61,29 +118,29 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let done = false
-      let accumulatedText = ''
-      let sources = []
+      let rawStreamText = ''
+      let parsedSources = []
 
       while (!done) {
         const { value, done: readerDone } = await reader.read()
         done = readerDone
         if (value) {
           const chunk = decoder.decode(value, { stream: !done })
-          accumulatedText += chunk
+          rawStreamText += chunk
+
+          let displayContent = rawStreamText
 
           // Check if we hit the sources delimiter
-          if (accumulatedText.includes('|||SOURCES|||')) {
-            const parts = accumulatedText.split('|||SOURCES|||')
-            const textResponse = parts[0]
+          if (rawStreamText.includes('|||SOURCES|||')) {
+            const parts = rawStreamText.split('|||SOURCES|||')
+            displayContent = parts[0]
             const sourcesJson = parts[1]
 
-            accumulatedText = textResponse // Only show LLM text before delimiter
-
-            if (sourcesJson) {
+            if (sourcesJson && sourcesJson.trim()) {
               try {
-                sources = JSON.parse(sourcesJson)
+                parsedSources = JSON.parse(sourcesJson)
               } catch (e) {
-                console.error("Error parsing sources JSON", e)
+                // Partial JSON chunk arriving, will parse on next stream token
               }
             }
           }
@@ -92,7 +149,7 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === assistantMsgId
-                ? { ...msg, content: accumulatedText, sources: sources }
+                ? { ...msg, content: displayContent, sources: parsedSources }
                 : msg
             )
           )
@@ -103,9 +160,9 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === assistantMsgId
-            ? { 
-                ...msg, 
-                content: 'Failed to complete query. Please ensure the backend server is running and your Gemini API key is configured.' 
+            ? {
+                ...msg,
+                content: 'Failed to complete query. Please ensure the backend server is running and your NVIDIA API key is configured.'
               }
             : msg
         )
@@ -116,51 +173,70 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
   }
 
   return (
-    <div className="glass flex flex-col h-[650px] overflow-hidden">
+    <div className="glass flex flex-col h-[600px] sm:h-[650px] lg:h-[700px] w-full min-w-0 overflow-hidden">
       {/* Header */}
-      <div className="border-b border-slate-800/80 px-6 py-4 flex items-center justify-between bg-slate-950/20">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+      <div className="border-b border-slate-800/80 px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3 bg-slate-950/20">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400 shrink-0">
             <Bot size={20} />
           </div>
-          <div>
-            <h2 className="font-semibold text-slate-100 font-outfit text-sm md:text-base">Support Copilot</h2>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className={`w-2 h-2 rounded-full ${activeDocument ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
-              <span className="text-xs text-slate-400 truncate max-w-[200px]">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-slate-100 font-outfit text-sm md:text-base truncate">Support Copilot</h2>
+            <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${activeDocument ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
+              <span className="text-xs text-slate-400 truncate max-w-[180px] sm:max-w-[280px]">
                 {activeDocument ? `Indexed: ${activeDocument}` : 'No document uploaded'}
               </span>
             </div>
           </div>
         </div>
-        
-        <div className="flex items-center gap-1 text-slate-400 text-xs bg-slate-900 px-3 py-1.5 rounded-full border border-slate-800">
-          <Sparkles size={12} className="text-indigo-400" />
+
+        <div className="flex items-center gap-1 text-slate-400 text-xs bg-slate-900 px-2.5 sm:px-3 py-1.5 rounded-full border border-slate-800 shrink-0">
+          <Sparkles size={12} className="text-indigo-400 shrink-0" />
           <span>Llama 3.1 8B</span>
         </div>
       </div>
 
+      {/* User ID bar */}
+      <div className="px-4 sm:px-6 py-2.5 border-b border-slate-800/80 bg-slate-900/30 flex flex-wrap items-center gap-2 sm:gap-3">
+        <label htmlFor="user-id" className="text-xs text-slate-400 font-medium shrink-0">User ID</label>
+        <input
+          id="user-id"
+          type="text"
+          value={userId}
+          onChange={(e) => setUserId(e.target.value)}
+          placeholder="e.g. alice"
+          className="bg-slate-950/60 border border-slate-800 focus:border-indigo-500/50 rounded-lg px-3 py-1 text-xs sm:text-sm text-slate-100 placeholder-slate-600 focus:outline-none w-36 sm:w-48 shrink-0"
+        />
+        <span className="text-[11px] text-slate-500 truncate">
+          Session: {sessionId.slice(0, 8)}...
+        </span>
+        {!historyLoaded && userId.trim() && (
+          <span className="text-[11px] text-indigo-400 animate-pulse shrink-0">Loading history...</span>
+        )}
+      </div>
+
       {/* Messages Scroll Feed */}
-      <div className="flex-grow overflow-y-auto p-6 flex flex-col gap-6 bg-slate-950/5">
+      <div className="flex-grow overflow-y-auto p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 bg-slate-950/5 min-w-0">
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`flex gap-3 max-w-[85%] ${
+            className={`flex gap-2.5 sm:gap-3 max-w-[92%] sm:max-w-[85%] min-w-0 ${
               msg.role === 'user' ? 'self-end flex-row-reverse' : 'self-start'
             }`}
           >
             {/* Avatar */}
-            <div className={`p-2 h-9 w-9 rounded-full flex items-center justify-center shrink-0 border ${
-              msg.role === 'user' 
-                ? 'bg-slate-800 border-slate-700 text-slate-100' 
+            <div className={`p-2 h-8 w-8 sm:h-9 sm:w-9 rounded-full flex items-center justify-center shrink-0 border ${
+              msg.role === 'user'
+                ? 'bg-slate-800 border-slate-700 text-slate-100'
                 : 'bg-indigo-950/60 border-indigo-900/60 text-indigo-400'
             }`}>
-              {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+              {msg.role === 'user' ? <User size={15} /> : <Bot size={15} />}
             </div>
 
             {/* Bubble */}
-            <div className="flex flex-col gap-2">
-              <div className={`p-4 rounded-2xl text-sm leading-relaxed ${
+            <div className="flex flex-col gap-2 min-w-0 max-w-full">
+              <div className={`p-3.5 sm:p-4 rounded-2xl text-xs sm:text-sm leading-relaxed break-words overflow-hidden ${
                 msg.role === 'user'
                   ? 'bg-indigo-600 text-white rounded-tr-none'
                   : 'bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none'
@@ -176,16 +252,16 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
 
               {/* Citations / Sources */}
               {msg.sources && msg.sources.length > 0 && (
-                <div className="flex flex-col gap-1.5 mt-1">
+                <div className="flex flex-col gap-1.5 mt-1 min-w-0 max-w-full">
                   <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1 pl-1">
                     <FileText size={10} /> Reference Sources
                   </span>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 max-w-full overflow-hidden">
                     {msg.sources.map((src) => (
-                      <div 
+                      <div
                         key={src.index}
                         title={src.snippet}
-                        className="text-xs bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-lg p-2 max-w-[240px] truncate cursor-help transition-all"
+                        className="text-xs bg-slate-900/80 border border-slate-800 hover:border-slate-700 rounded-lg p-2 max-w-full sm:max-w-[240px] truncate cursor-help transition-all"
                       >
                         <span className="inline-block bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] px-1.5 py-0.5 rounded mr-1.5 font-bold">
                           {src.index}
@@ -203,8 +279,8 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
       </div>
 
       {/* Input Tray */}
-      <form onSubmit={handleSend} className="p-4 border-t border-slate-800 bg-slate-900/20 flex gap-3 items-center">
-        <div className="relative flex-grow">
+      <form onSubmit={handleSend} className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/20 flex gap-2 sm:gap-3 items-center w-full min-w-0">
+        <div className="relative flex-grow min-w-0">
           <input
             id="chat-input-text"
             type="text"
@@ -212,9 +288,9 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
             value={input}
             disabled={!activeDocument || isGenerating}
             onChange={(e) => setInput(e.target.value)}
-            className="w-full bg-slate-950/60 border border-slate-800 focus:border-indigo-500/50 rounded-xl py-3 pl-4 pr-12 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-300"
+            className="w-full bg-slate-950/60 border border-slate-800 focus:border-indigo-500/50 rounded-xl py-2.5 sm:py-3 pl-3.5 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-300 min-w-0"
           />
-          <span className="absolute right-3.5 top-3.5 text-xs text-slate-500 flex items-center gap-1 hidden md:flex">
+          <span className="absolute right-3.5 top-3.5 text-xs text-slate-500 flex items-center gap-1 hidden sm:flex">
             <CornerDownLeft size={12} />
           </span>
         </div>
@@ -223,9 +299,9 @@ export default function ChatWindow({ backendUrl, activeDocument }) {
           id="btn-chat-send"
           type="submit"
           disabled={!input.trim() || isGenerating}
-          className="p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.02]"
+          className="p-2.5 sm:p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.02] shrink-0"
         >
-          <Send size={18} />
+          <Send size={16} />
         </button>
       </form>
     </div>
