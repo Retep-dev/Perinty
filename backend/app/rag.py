@@ -114,18 +114,23 @@ class SupabaseHTTPVectorStore(BasePydanticVectorStore):
         for node in nodes:
             metadata = node.metadata or {}
             metadata["node_id"] = node.node_id
+            user_id = metadata.get("user_id")
+            if user_id:
+                metadata["user_id"] = str(user_id)
 
             content = node.get_content(metadata_mode=MetadataMode.NONE)
             embedding = node.get_embedding()
             if not embedding:
                 embedding = Settings.embed_model.get_text_embedding(content)
 
+            row = {
+                "content": content,
+                "metadata": metadata,
+                "embedding": embedding
+            }
+
             def _insert():
-                return supabase_client.table("documents").insert({
-                    "content": content,
-                    "metadata": metadata,
-                    "embedding": embedding
-                }).execute()
+                return supabase_client.table("documents").insert(row).execute()
 
             try:
                 _execute_with_retry(_insert)
@@ -145,10 +150,13 @@ class SupabaseHTTPVectorStore(BasePydanticVectorStore):
         if not supabase_client:
             raise ValueError("Supabase client is not initialized.")
 
+        user_id = delete_kwargs.get("user_id")
+
         def _delete():
-            return supabase_client.table("documents").delete().eq(
-                "metadata->>file_name", ref_doc_id
-            ).execute()
+            q = supabase_client.table("documents").delete().eq("metadata->>file_name", ref_doc_id)
+            if user_id:
+                q = q.eq("metadata->>user_id", str(user_id))
+            return q.execute()
 
         try:
             _execute_with_retry(_delete)
@@ -159,19 +167,43 @@ class SupabaseHTTPVectorStore(BasePydanticVectorStore):
         if not supabase_client:
             raise ValueError("Supabase client is not initialized.")
 
+        user_id = kwargs.get("user_id")
+        file_name = kwargs.get("file_name")
+
         def _query():
             return supabase_client.rpc("match_documents", {
                 "query_embedding": query.query_embedding,
                 "match_threshold": 0.1,
-                "match_count": query.similarity_top_k
+                "match_count": query.similarity_top_k * 6
             }).execute()
 
         response = _execute_with_retry(_query)
 
+        raw_items = response.data or []
+        if user_id:
+            user_str = str(user_id)
+            matching_items = [
+                item for item in raw_items
+                if item.get("metadata", {}).get("user_id") == user_str
+                or item.get("user_id") == user_str
+            ]
+            if matching_items:
+                raw_items = matching_items
+
+        if file_name and file_name != "All Documents":
+            doc_matched_items = [
+                item for item in raw_items
+                if item.get("metadata", {}).get("file_name") == file_name
+            ]
+            if doc_matched_items:
+                raw_items = doc_matched_items
+
+        raw_items = raw_items[:query.similarity_top_k]
+
         nodes = []
         similarities = []
         ids = []
-        for item in response.data:
+        for item in raw_items:
             content = item.get("content", "")
             metadata = item.get("metadata", {})
             similarity = item.get("similarity", 0.0)
@@ -214,28 +246,37 @@ def reinit_index():
     get_index()
 
 
-def ingest_document(file_name: str, file_type: str, text_content: str) -> Dict[str, Any]:
+def ingest_document(file_name: str, file_type: str, text_content: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Parses, chunks, embeds, and stores the text content using LlamaIndex.
-    Returns status and number of chunks ingested.
+    Parses, chunks, embeds, and stores text content using LlamaIndex.
+    Scope metadata by user_id for multi-tenancy.
     """
     if not NVIDIA_API_KEY:
         raise ValueError("NVIDIA_API_KEY is not set. Cannot run embedding pipeline.")
 
+    metadata = {"file_name": file_name, "file_type": file_type}
+    if user_id:
+        metadata["user_id"] = str(user_id)
+
     # 1. Wrap content in LlamaIndex Document
     doc = Document(
         text=text_content,
-        metadata={"file_name": file_name, "file_type": file_type}
+        metadata=metadata
     )
 
-    # 2. Get/Initialize the index
+    # 2. Get/Initialize index
     idx = get_index()
 
     # 3. Split document into nodes
     parser = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     nodes = parser.get_nodes_from_documents([doc])
 
-    # 4. Insert nodes (this automatically embeds them via Settings.embed_model)
+    # Propagate metadata to nodes
+    for node in nodes:
+        if user_id:
+            node.metadata["user_id"] = str(user_id)
+
+    # 4. Insert nodes
     idx.insert_nodes(nodes)
 
     return {
@@ -245,52 +286,58 @@ def ingest_document(file_name: str, file_type: str, text_content: str) -> Dict[s
     }
 
 
-def list_documents() -> List[Dict[str, Any]]:
+def list_documents(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    List distinct source documents stored in Supabase by file_name.
+    List distinct source documents stored in Supabase, filtered by user_id or default documents.
     """
     if not supabase_client:
         raise ValueError("Supabase client is not initialized.")
 
     response = supabase_client.table("documents").select("metadata").execute()
+    user_str = str(user_id) if user_id else None
     docs = {}
-    for row in response.data:
+
+    for row in (response.data or []):
         meta = row.get("metadata") or {}
+        doc_user = meta.get("user_id")
         file_name = meta.get("file_name")
         file_type = meta.get("file_type", "unknown")
-        if file_name and file_name not in docs:
-            docs[file_name] = {"file_name": file_name, "file_type": file_type}
+
+        # Match user_id OR default/legacy uploaded documents
+        if not user_str or doc_user == user_str or doc_user in ("default_user", None, "", "all_users"):
+            if file_name and file_name not in docs:
+                docs[file_name] = {"file_name": file_name, "file_type": file_type}
 
     return list(docs.values())
 
 
-def delete_document(file_name: str) -> Dict[str, Any]:
+def delete_document(file_name: str, user_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Delete all chunks belonging to a specific source document.
+    Delete all chunks belonging to a specific document.
     """
     if not supabase_client:
         raise ValueError("Supabase client is not initialized.")
 
     try:
-        supabase_client.table("documents").delete().eq(
-            "metadata->>file_name", file_name
-        ).execute()
-        # Also clear in-memory index so it reloads fresh on next query
+        supabase_client.table("documents").delete().eq("metadata->>file_name", file_name).execute()
         reinit_index()
         return {"status": "success", "message": f"Deleted '{file_name}'"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 
-def clear_storage() -> Dict[str, Any]:
+def clear_storage(user_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Deletes all records from vector store.
+    Deletes records from vector store for user_id (or all if not specified).
     """
     if supabase_client:
         try:
-            supabase_client.table("documents").delete().neq(
-                "id", "00000000-0000-0000-0000-000000000000"
-            ).execute()
+            q = supabase_client.table("documents").delete()
+            if user_id:
+                q = q.eq("metadata->>user_id", str(user_id))
+            else:
+                q = q.neq("id", "00000000-0000-0000-0000-000000000000")
+            q.execute()
         except Exception as e:
             return {"status": "error", "message": f"Supabase failed: {str(e)}"}
 
@@ -299,7 +346,7 @@ def clear_storage() -> Dict[str, Any]:
 
 
 # -----------------------------------------------------------------------------
-# Chat memory helpers
+# Chat memory & Analytics helpers
 # -----------------------------------------------------------------------------
 
 def get_chat_history(user_id: str, session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -313,8 +360,8 @@ def get_chat_history(user_id: str, session_id: str, limit: int = 10) -> List[Dic
         response = (
             supabase_client.table("chat_messages")
             .select("*")
-            .eq("user_id", user_id)
-            .eq("session_id", session_id)
+            .eq("user_id", str(user_id))
+            .eq("session_id", str(session_id))
             .order("created_at", desc=False)
             .limit(limit)
             .execute()
@@ -322,6 +369,42 @@ def get_chat_history(user_id: str, session_id: str, limit: int = 10) -> List[Dic
         return response.data
     except Exception as e:
         print(f"Failed to load chat history: {e}")
+        return []
+
+
+def get_user_sessions(user_id: str) -> List[Dict[str, Any]]:
+    """
+    Load distinct past chat sessions with message snippets for a user.
+    """
+    if not supabase_client:
+        return []
+
+    try:
+        response = (
+            supabase_client.table("chat_messages")
+            .select("session_id, content, created_at, role, user_id")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        user_str = str(user_id) if user_id else None
+        sessions = {}
+
+        for row in (response.data or []):
+            sid = row.get("session_id")
+            row_user = row.get("user_id")
+
+            # Match user_id OR default/legacy chat sessions
+            if not user_str or row_user == user_str or row_user in ("default_user", None, "", "all_users"):
+                if sid and sid not in sessions:
+                    content_snippet = row.get("content", "")[:60]
+                    sessions[sid] = {
+                        "session_id": sid,
+                        "last_message": content_snippet + "..." if len(row.get("content", "")) > 60 else content_snippet,
+                        "created_at": row.get("created_at")
+                    }
+        return list(sessions.values())
+    except Exception as e:
+        print(f"Failed to fetch user sessions: {e}")
         return []
 
 
@@ -340,14 +423,77 @@ def save_chat_message(
 
     try:
         supabase_client.table("chat_messages").insert({
-            "user_id": user_id,
-            "session_id": session_id,
+            "user_id": str(user_id),
+            "session_id": str(session_id),
             "role": role,
             "content": content,
             "sources": sources or []
         }).execute()
     except Exception as e:
         print(f"Failed to save chat message: {e}")
+
+
+def get_admin_analytics(user_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Generate admin usage and telemetry statistics for Phase 3 dashboard.
+    """
+    if not supabase_client:
+        return {
+            "total_documents": 0,
+            "total_chunks": 0,
+            "total_messages": 0,
+            "active_sessions": 0
+        }
+
+    try:
+        # 1. Total Chunks & Documents
+        doc_res = supabase_client.table("documents").select("id, metadata").execute()
+        
+        total_chunks = 0
+        distinct_docs = set()
+        user_str = str(user_id) if user_id else None
+
+        for row in (doc_res.data or []):
+            meta = row.get("metadata") or {}
+            doc_user = meta.get("user_id")
+            fname = meta.get("file_name")
+
+            # Match user_id OR default/legacy uploaded documents
+            if not user_str or doc_user == user_str or doc_user in ("default_user", None, "", "all_users"):
+                if fname:
+                    distinct_docs.add(fname)
+                    total_chunks += 1
+
+        total_documents = len(distinct_docs)
+
+        # 2. Total Chat Messages & Sessions
+        msg_res = supabase_client.table("chat_messages").select("id, session_id, user_id").execute()
+        
+        filtered_msgs = []
+        for m in (msg_res.data or []):
+            m_user = m.get("user_id")
+            if not user_str or m_user == user_str or m_user in ("default_user", None, ""):
+                filtered_msgs.append(m)
+
+        total_messages = len(filtered_msgs)
+        distinct_sessions = len(set(m.get("session_id") for m in filtered_msgs if m.get("session_id")))
+
+        return {
+            "total_documents": total_documents,
+            "total_chunks": total_chunks,
+            "total_messages": total_messages,
+            "active_sessions": distinct_sessions,
+            "user_id": user_id or "all_users"
+        }
+    except Exception as e:
+        print(f"Analytics query error: {e}")
+        return {
+            "total_documents": 0,
+            "total_chunks": 0,
+            "total_messages": 0,
+            "active_sessions": 0,
+            "error": str(e)
+        }
 
 
 def _build_memory_prefix(history: List[Dict[str, Any]]) -> str:
@@ -369,7 +515,8 @@ def _build_memory_prefix(history: List[Dict[str, Any]]) -> str:
 def generate_streaming_response(
     query_text: str,
     user_id: str,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    active_document: Optional[str] = None
 ) -> Generator[str, None, None]:
     """
     RAG Query flow with streaming response generator using LlamaIndex.
@@ -384,6 +531,8 @@ def generate_streaming_response(
         session_id = str(uuid.uuid4())
 
     # Save user message
+    save_chat_message(user_id, session_id, "user", query_text)
+
     try:
         idx = get_index()
 
@@ -417,11 +566,12 @@ def generate_streaming_response(
 
         qa_template = PromptTemplate(system_prompt)
 
-        # Create query engine
+        # Create query engine with user_id & file_name kwargs filter for SupabaseHTTPVectorStore
         query_engine = idx.as_query_engine(
             streaming=True,
             similarity_top_k=4,
-            text_qa_template=qa_template
+            text_qa_template=qa_template,
+            vector_store_kwargs={"user_id": user_id, "file_name": active_document}
         )
 
         # Execute query and stream text chunks

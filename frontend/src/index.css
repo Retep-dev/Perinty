@@ -140,3 +140,103 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--primary-color);
 }
+
+/* Light Mode Overrides */
+.light {
+  background-color: #f1f5f9 !important;
+  color: #1e293b !important;
+}
+
+.light .glass {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02) !important;
+}
+
+.light header {
+  background: #ffffff !important;
+  border-color: #e2e8f0 !important;
+}
+
+.light h1, .light h2, .light h3, .light h4,
+.light .text-slate-100, .light .text-slate-200, .light .text-slate-300 {
+  color: #0f172a !important;
+}
+
+.light p, .light label {
+  color: #334155 !important;
+}
+
+.light ol li, .light ul li {
+  color: #1e293b !important;
+  font-weight: 500 !important;
+}
+
+.light .text-slate-400, .light .text-slate-500 {
+  color: #475569 !important;
+}
+
+.light .bg-\[\#0e1424\] {
+  background-color: #ffffff !important;
+}
+
+.light .bg-slate-900, 
+.light .bg-slate-950, 
+.light .bg-slate-900\/80, 
+.light .bg-slate-900\/50, 
+.light .bg-slate-900\/60, 
+.light .bg-slate-900\/30, 
+.light .bg-slate-950\/20, 
+.light .bg-slate-950\/60,
+.light .bg-slate-950\/5,
+.light .bg-slate-950\/80 {
+  background-color: #f8fafc !important;
+}
+
+.light input, .light select, .light textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light input::placeholder, .light textarea::placeholder {
+  color: #64748b !important;
+}
+
+.light .border-slate-800, 
+.light .border-slate-800\/80, 
+.light .border-slate-900,
+.light .border-slate-700,
+.light .border-indigo-900\/60 {
+  border-color: #cbd5e1 !important;
+}
+
+.light .bg-indigo-950\/60, 
+.light .bg-indigo-950\/20, 
+.light .bg-indigo-500\/10,
+.light .bg-indigo-600\/20 {
+  background-color: #e0e7ff !important;
+}
+
+.light .text-indigo-400, .light .text-indigo-300 {
+  color: #4338ca !important;
+}
+
+.light .text-purple-300 {
+  color: #7e22ce !important;
+}
+
+.light .bg-indigo-600 {
+  background-color: #4f46e5 !important;
+  color: #ffffff !important;
+}
+
+.light footer {
+  border-color: #e2e8f0 !important;
+  color: #64748b !important;
+}
+
+.light option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}

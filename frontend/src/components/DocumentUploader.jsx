@@ -1,7 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Upload, FileText, CheckCircle, AlertCircle, RefreshCw, Trash2 } from 'lucide-react'
 
-export default function DocumentUploader({ backendUrl, onUploadSuccess, onClearAll }) {
+export default function DocumentUploader({
+  backendUrl,
+  userId,
+  activeDocument,
+  onSelectDocument,
+  onUploadSuccess,
+  onClearAll,
+}) {
   const [dragActive, setDragActive] = useState(false)
   const [file, setFile] = useState(null)
   const [status, setStatus] = useState('idle') // idle, uploading, success, error
@@ -14,15 +21,28 @@ export default function DocumentUploader({ backendUrl, onUploadSuccess, onClearA
 
   useEffect(() => {
     fetchDocuments()
-  }, [backendUrl])
+  }, [backendUrl, userId])
 
   const fetchDocuments = async () => {
     setLoadingDocs(true)
     try {
-      const response = await fetch(`${backendUrl}/documents`)
+      const url = userId
+        ? `${backendUrl}/documents?user_id=${encodeURIComponent(userId)}`
+        : `${backendUrl}/documents`
+
+      const response = await fetch(url, {
+        headers: {
+          'X-User-ID': userId || '',
+        },
+      })
       if (response.ok) {
         const data = await response.json()
-        setDocuments(data.documents || [])
+        const fetchedDocs = data.documents || []
+        setDocuments(fetchedDocs)
+        // Automatically select the latest uploaded document if none selected
+        if (!activeDocument && fetchedDocs.length > 0 && onSelectDocument) {
+          onSelectDocument(fetchedDocs[0].file_name)
+        }
       }
     } catch (err) {
       console.error('Failed to fetch documents', err)
@@ -71,10 +91,16 @@ export default function DocumentUploader({ backendUrl, onUploadSuccess, onClearA
 
     const formData = new FormData()
     formData.append('file', selectedFile)
+    if (userId) {
+      formData.append('user_id', userId)
+    }
 
     try {
       const response = await fetch(`${backendUrl}/upload`, {
         method: 'POST',
+        headers: {
+          'X-User-ID': userId || '',
+        },
         body: formData,
       })
 
@@ -83,6 +109,7 @@ export default function DocumentUploader({ backendUrl, onUploadSuccess, onClearA
       if (response.ok) {
         setStatus('success')
         setMessage(`Success! Created ${data.chunks_created} context chunks in ${data.storage}.`)
+        if (onSelectDocument) onSelectDocument(selectedFile.name)
         if (onUploadSuccess) onUploadSuccess(selectedFile.name)
         await fetchDocuments()
       } else {
@@ -96,15 +123,26 @@ export default function DocumentUploader({ backendUrl, onUploadSuccess, onClearA
     }
   }
 
-  const handleDeleteDocument = async (fileName) => {
+  const handleDeleteDocument = async (e, fileName) => {
+    e.stopPropagation()
     if (!confirm(`Delete "${fileName}" and all its chunks?`)) return
 
     try {
-      const response = await fetch(`${backendUrl}/documents/${encodeURIComponent(fileName)}`, {
+      const url = userId
+        ? `${backendUrl}/documents/${encodeURIComponent(fileName)}?user_id=${encodeURIComponent(userId)}`
+        : `${backendUrl}/documents/${encodeURIComponent(fileName)}`
+
+      const response = await fetch(url, {
         method: 'DELETE',
+        headers: {
+          'X-User-ID': userId || '',
+        },
       })
       const data = await response.json()
       if (response.ok) {
+        if (activeDocument === fileName && onSelectDocument) {
+          onSelectDocument(null)
+        }
         await fetchDocuments()
       } else {
         alert(data.detail || 'Failed to delete document.')
@@ -187,38 +225,69 @@ export default function DocumentUploader({ backendUrl, onUploadSuccess, onClearA
 
       {/* Document List */}
       <div className="flex flex-col gap-2">
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-          Indexed Documents
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+            Indexed Documents
+          </h3>
+          <span className="text-[10px] text-indigo-400 font-medium">Select to Query</span>
+        </div>
+
         {loadingDocs ? (
           <p className="text-slate-500 text-xs">Loading documents...</p>
         ) : documents.length === 0 ? (
           <p className="text-slate-500 text-xs">No documents indexed yet.</p>
         ) : (
-          <div className="flex flex-col gap-2 max-h-40 overflow-y-auto">
-            {documents.map((doc) => (
-              <div
-                key={doc.file_name}
-                className="flex items-center justify-between gap-2 text-slate-300 text-sm bg-slate-900/60 p-2.5 rounded-lg border border-slate-800"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileText size={14} className="text-indigo-400 shrink-0" />
-                  <span className="truncate" title={doc.file_name}>
-                    {doc.file_name}
-                  </span>
-                  <span className="text-[10px] uppercase text-slate-500 border border-slate-700 px-1 rounded shrink-0">
-                    {doc.file_type}
-                  </span>
-                </div>
-                <button
-                  onClick={() => handleDeleteDocument(doc.file_name)}
-                  className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors shrink-0"
-                  title="Delete document"
-                >
-                  <Trash2 size={14} />
-                </button>
+          <div className="flex flex-col gap-2 max-h-52 overflow-y-auto">
+            {/* Global Search Option */}
+            <div
+              onClick={() => onSelectDocument && onSelectDocument(null)}
+              className={`flex items-center justify-between gap-2 text-xs p-2.5 rounded-lg border cursor-pointer transition-all ${
+                !activeDocument
+                  ? 'bg-indigo-950/40 border-indigo-500/60 text-indigo-300 font-semibold shadow-md shadow-indigo-950/40'
+                  : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`w-2 h-2 rounded-full ${!activeDocument ? 'bg-indigo-400 animate-pulse' : 'bg-slate-600'}`}></div>
+                <span className="truncate font-medium">All Documents (Global Search)</span>
               </div>
-            ))}
+              <span className="text-[10px] uppercase text-indigo-400 bg-indigo-500/10 px-1.5 py-0.5 rounded border border-indigo-500/20">
+                All
+              </span>
+            </div>
+
+            {/* Individual Source Files */}
+            {documents.map((doc) => {
+              const isSelected = activeDocument === doc.file_name
+              return (
+                <div
+                  key={doc.file_name}
+                  onClick={() => onSelectDocument && onSelectDocument(doc.file_name)}
+                  className={`flex items-center justify-between gap-2 text-xs p-2.5 rounded-lg border cursor-pointer transition-all ${
+                    isSelected
+                      ? 'bg-indigo-950/40 border-indigo-500/60 text-indigo-300 font-semibold shadow-md shadow-indigo-950/40'
+                      : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText size={14} className={isSelected ? 'text-indigo-400 shrink-0' : 'text-slate-500 shrink-0'} />
+                    <span className="truncate" title={doc.file_name}>
+                      {doc.file_name}
+                    </span>
+                    <span className="text-[10px] uppercase text-slate-500 border border-slate-700 px-1 rounded shrink-0">
+                      {doc.file_type}
+                    </span>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteDocument(e, doc.file_name)}
+                    className="text-slate-500 hover:text-rose-400 p-1 rounded transition-colors shrink-0"
+                    title="Delete document"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, CornerDownLeft, Sparkles, FileText } from 'lucide-react'
+import { Send, Bot, User, CornerDownLeft, Sparkles, FileText, PlusCircle, History } from 'lucide-react'
 
 export default function ChatWindow({ backendUrl, activeDocument, userId, setUserId }) {
-  const [sessionId] = useState(() => {
+  const [sessionId, setSessionId] = useState(() => {
     // Reuse session id across refreshes for the same browser tab session
     const existing = sessionStorage.getItem('perinty_session_id')
     if (existing) return existing
@@ -11,6 +11,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
     return fresh
   })
 
+  const [pastSessions, setPastSessions] = useState([])
   const [messages, setMessages] = useState([
     {
       id: 'welcome',
@@ -24,6 +25,35 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
 
   const messagesEndRef = useRef(null)
 
+  const fetchPastSessions = async (targetUser) => {
+    if (!targetUser || !targetUser.trim()) return
+    try {
+      const res = await fetch(`${backendUrl}/chat/sessions/${encodeURIComponent(targetUser.trim())}`)
+      if (res.ok) {
+        const data = await res.json()
+        setPastSessions(data.sessions || [])
+      }
+    } catch (e) {
+      console.error('Failed to fetch past sessions', e)
+    }
+  }
+
+  const handleNewChat = () => {
+    const fresh = crypto.randomUUID()
+    sessionStorage.setItem('perinty_session_id', fresh)
+    setSessionId(fresh)
+    setMessages([
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content: 'Started a fresh chat session! Your uploaded documents and user login remain active. Ask me anything.',
+      }
+    ])
+    if (userId.trim()) {
+      setTimeout(() => fetchPastSessions(userId), 500)
+    }
+  }
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
@@ -32,12 +62,15 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
     scrollToBottom()
   }, [messages, isGenerating])
 
-  // Load chat history when userId changes
+  // Load chat history and past session list when userId or sessionId changes
   useEffect(() => {
     if (!userId.trim()) {
       setHistoryLoaded(false)
+      setPastSessions([])
       return
     }
+
+    fetchPastSessions(userId)
 
     const loadHistory = async () => {
       try {
@@ -56,7 +89,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
             {
               id: 'welcome',
               role: 'assistant',
-              content: `Welcome back, ${userId}. Continuing session ${sessionId.slice(0, 8)}...`,
+              content: `Welcome back, ${userId}. Loaded session ${sessionId.slice(0, 8)}...`,
             },
             ...history,
           ])
@@ -107,6 +140,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
           message: userMessageText,
           user_id: userId,
           session_id: sessionId,
+          active_document: activeDocument,
         }),
       })
 
@@ -169,7 +203,19 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
       )
     } finally {
       setIsGenerating(false)
+      if (userId.trim()) {
+        fetchPastSessions(userId)
+      }
     }
+  }
+
+  // Ensure current active session is always in the dropdown list
+  const displaySessions = [...pastSessions]
+  if (!displaySessions.some(s => s.session_id === sessionId)) {
+    displaySessions.unshift({
+      session_id: sessionId,
+      last_message: 'Active conversation',
+    })
   }
 
   return (
@@ -208,12 +254,43 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
           placeholder="e.g. alice"
           className="bg-slate-950/60 border border-slate-800 focus:border-indigo-500/50 rounded-lg px-3 py-1 text-xs sm:text-sm text-slate-100 placeholder-slate-600 focus:outline-none w-36 sm:w-48 shrink-0"
         />
-        <span className="text-[11px] text-slate-500 truncate">
+        <span className="text-[11px] text-slate-500 truncate hidden md:inline">
           Session: {sessionId.slice(0, 8)}...
         </span>
         {!historyLoaded && userId.trim() && (
-          <span className="text-[11px] text-indigo-400 animate-pulse shrink-0">Loading history...</span>
+          <span className="text-[11px] text-indigo-400 animate-pulse shrink-0">Loading...</span>
         )}
+
+        <div className="ml-auto flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg px-2 py-0.5">
+            <History size={13} className="text-indigo-400 shrink-0" />
+            <select
+              value={sessionId}
+              onChange={(e) => {
+                const selectedSid = e.target.value
+                sessionStorage.setItem('perinty_session_id', selectedSid)
+                setSessionId(selectedSid)
+              }}
+              className="bg-transparent text-slate-300 text-xs font-medium focus:outline-none max-w-[140px] sm:max-w-[190px] truncate cursor-pointer py-0.5"
+              title="Switch to a past conversation session"
+            >
+              {displaySessions.map((s) => (
+                <option key={s.session_id} value={s.session_id} className="bg-slate-950 text-slate-200">
+                  {s.session_id === sessionId ? '▶ ' : ''}{s.last_message || `Session ${s.session_id.slice(0, 6)}`}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <button
+            onClick={handleNewChat}
+            className="flex items-center gap-1.5 text-xs text-indigo-300 hover:text-white bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 px-2.5 py-1 rounded-lg transition-all shadow-sm font-medium shrink-0"
+            title="Start a new chat session without logging out"
+          >
+            <PlusCircle size={14} className="text-indigo-400" />
+            <span className="hidden sm:inline">New Chat</span>
+          </button>
+        </div>
       </div>
 
       {/* Messages Scroll Feed */}
