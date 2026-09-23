@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Send, Bot, User, CornerDownLeft, Sparkles, FileText, PlusCircle, History } from 'lucide-react'
+import { parseStream } from '../stream'
 
-export default function ChatWindow({ backendUrl, activeDocument, userId, setUserId }) {
+export default function ChatWindow({ backendUrl, activeDocument, userId, setUserId, hasDocuments }) {
   const [sessionId, setSessionId] = useState(() => {
     // Reuse session id across refreshes for the same browser tab session
     const existing = sessionStorage.getItem('perinty_session_id')
@@ -55,7 +56,9 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
   }
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Keep chat scrolling inside its panel, including in the landing preview.
+    const panel = messagesEndRef.current?.parentElement
+    panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' })
   }
 
   useEffect(() => {
@@ -67,6 +70,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
     if (!userId.trim()) {
       setHistoryLoaded(false)
       setPastSessions([])
+      setMessages([])
       return
     }
 
@@ -106,7 +110,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
 
   const handleSend = async (e) => {
     e.preventDefault()
-    if (!input.trim() || isGenerating) return
+    if (!input.trim() || isGenerating || !hasDocuments) return
     if (!userId.trim()) {
       alert('Please enter a User ID above the chat.')
       return
@@ -162,22 +166,9 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
           const chunk = decoder.decode(value, { stream: !done })
           rawStreamText += chunk
 
-          let displayContent = rawStreamText
-
-          // Check if we hit the sources delimiter
-          if (rawStreamText.includes('|||SOURCES|||')) {
-            const parts = rawStreamText.split('|||SOURCES|||')
-            displayContent = parts[0]
-            const sourcesJson = parts[1]
-
-            if (sourcesJson && sourcesJson.trim()) {
-              try {
-                parsedSources = JSON.parse(sourcesJson)
-              } catch (e) {
-                // Partial JSON chunk arriving, will parse on next stream token
-              }
-            }
-          }
+          const parsed = parseStream(rawStreamText)
+          const displayContent = parsed.content
+          parsedSources = parsed.sources
 
           // Update assistant message text in real time
           setMessages((prev) =>
@@ -189,6 +180,9 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
           )
         }
       }
+      rawStreamText += decoder.decode()
+      const final = parseStream(rawStreamText, true)
+      setMessages((prev) => prev.map((msg) => msg.id === assistantMsgId ? { ...msg, content: final.content, sources: final.sources } : msg))
     } catch (err) {
       console.error(err)
       setMessages((prev) =>
@@ -231,7 +225,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
             <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
               <span className={`w-2 h-2 rounded-full shrink-0 ${activeDocument ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
               <span className="text-xs text-slate-400 truncate max-w-[180px] sm:max-w-[280px]">
-                {activeDocument ? `Indexed: ${activeDocument}` : 'No document uploaded'}
+                {activeDocument ? `Indexed: ${activeDocument}` : hasDocuments ? 'All Documents' : 'No document uploaded'}
               </span>
             </div>
           </div>
@@ -239,7 +233,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
 
         <div className="flex items-center gap-1 text-slate-400 text-xs bg-slate-900 px-2.5 sm:px-3 py-1.5 rounded-full border border-slate-800 shrink-0">
           <Sparkles size={12} className="text-indigo-400 shrink-0" />
-          <span>Llama 3.1 8B</span>
+          <span>NVIDIA NIM</span>
         </div>
       </div>
 
@@ -361,9 +355,9 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
           <input
             id="chat-input-text"
             type="text"
-            placeholder={activeDocument ? "Ask anything about the document..." : "Upload a document in the sidebar to start querying..."}
+            placeholder={hasDocuments ? "Ask anything about your documents..." : "Upload a document in the sidebar to start querying..."}
             value={input}
-            disabled={!activeDocument || isGenerating}
+            disabled={!hasDocuments || !userId.trim() || isGenerating}
             onChange={(e) => setInput(e.target.value)}
             className="w-full bg-slate-950/60 border border-slate-800 focus:border-indigo-500/50 rounded-xl py-2.5 sm:py-3 pl-3.5 sm:pl-4 pr-10 sm:pr-12 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-50 transition-all duration-300 min-w-0"
           />
@@ -375,7 +369,7 @@ export default function ChatWindow({ backendUrl, activeDocument, userId, setUser
         <button
           id="btn-chat-send"
           type="submit"
-          disabled={!input.trim() || isGenerating}
+          disabled={!hasDocuments || !userId.trim() || !input.trim() || isGenerating}
           className="p-2.5 sm:p-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 hover:scale-[1.02] shrink-0"
         >
           <Send size={16} />

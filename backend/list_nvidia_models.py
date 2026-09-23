@@ -11,7 +11,7 @@ if not NVIDIA_API_KEY:
     exit(1)
 
 if not NVIDIA_API_KEY.startswith("nvapi-"):
-    print(f"WARNING: Key does not start with 'nvapi-': {NVIDIA_API_KEY[:10]}...")
+    print("WARNING: Key does not have the expected NVIDIA API key format.")
 
 os.environ["NVIDIA_API_KEY"] = NVIDIA_API_KEY
 

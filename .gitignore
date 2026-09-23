@@ -5,6 +5,12 @@ __pycache__/
 venv/
 .venv/
 .env
+.env.*
+!.env.example
+.vercel/
+.tools/
+public/
+test-results/
 
 # Node
 node_modules/

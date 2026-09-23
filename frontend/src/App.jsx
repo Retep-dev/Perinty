@@ -9,6 +9,8 @@ export default function App() {
   const backendUrl = '/api'
 
   const [activeDocument, setActiveDocument] = useState(null)
+  const [documentCount, setDocumentCount] = useState(0)
+  const [documentRevision, setDocumentRevision] = useState(0)
   const [userId, setUserId] = useState('')
   const [authUser, setAuthUser] = useState(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
@@ -77,6 +79,8 @@ export default function App() {
       })
       if (response.ok) {
         setActiveDocument(null)
+        setDocumentCount(0)
+        setDocumentRevision((value) => value + 1)
         alert('Knowledge base successfully cleared!')
       } else {
         alert('Failed to clear knowledge base.')
@@ -161,7 +165,7 @@ export default function App() {
               className="flex items-center gap-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 py-1.5 rounded-lg transition-all shadow-md shadow-indigo-600/20"
             >
               <LogIn size={14} />
-              <span>Sign In</span>
+              <span>Demo Identity</span>
             </button>
           )}
 
@@ -194,12 +198,12 @@ export default function App() {
               Multi-Tenant SaaS Document Q&amp;A (RAG)
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Perinty adds Supabase Auth &amp; Row-Level Security multi-tenancy, user-scoped RAG vector isolation, and SaaS Admin Analytics.
+              Document Q&amp;A with Supabase storage and user-scoped retrieval. Demo identities are not authenticated; use only non-sensitive documents.
             </p>
             <div className="flex flex-col gap-2 mt-1">
               <div className="flex items-center gap-2 text-xs text-slate-300 min-w-0">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></div>
-                <span className="truncate">Supabase RLS Multi-Tenancy</span>
+                <span className="truncate">Supabase Document Storage</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-300 min-w-0">
                 <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0"></div>
@@ -218,6 +222,8 @@ export default function App() {
 
           {/* Document Ingestion Card */}
           <DocumentUploader
+            revision={documentRevision}
+            onDocumentsChange={setDocumentCount}
             backendUrl={backendUrl}
             userId={userId}
             activeDocument={activeDocument}
@@ -234,6 +240,7 @@ export default function App() {
           {/* Chat Window */}
           <div className="flex-grow w-full min-w-0">
             <ChatWindow
+              hasDocuments={documentCount > 0}
               backendUrl={backendUrl}
               activeDocument={activeDocument}
               userId={userId}
@@ -248,8 +255,8 @@ export default function App() {
               SaaS Quick-Guide
             </h3>
             <ol className="text-xs text-slate-300 list-decimal pl-4 flex flex-col gap-3 leading-relaxed">
-              <li>Click <strong className="text-indigo-400">Sign In</strong> or set a User ID to authenticate your session.</li>
-              <li>Upload private documents — files are isolated to your user ID.</li>
+              <li>Choose a <strong className="text-indigo-400">Demo Identity</strong> or enter a User ID. This is not authentication.</li>
+              <li>Upload non-sensitive documents up to 4 MB. Anyone knowing your User ID can access its data.</li>
               <li>Open <strong className="text-indigo-400">Analytics</strong> in the header to view vector &amp; query usage statistics.</li>
               <li>Query the chat; context is retrieved strictly from your tenant store.</li>
             </ol>
@@ -257,8 +264,8 @@ export default function App() {
             <div className="mt-2 pt-3 border-t border-slate-800/80 flex flex-col gap-2">
               <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500">SaaS Stack Badges</span>
               <div className="flex flex-wrap gap-1.5 text-[11px] text-slate-400">
-                <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded text-indigo-300">Supabase Auth</span>
-                <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded text-emerald-300">RLS Multi-Tenant</span>
+                <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded text-indigo-300">Demo Identity</span>
+                <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded text-emerald-300">User-Scoped Queries</span>
                 <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded text-purple-300">Langfuse</span>
                 <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded">GitHub CI/CD</span>
                 <span className="bg-slate-900/80 border border-slate-800 px-2 py-0.5 rounded">pgvector HNSW</span>

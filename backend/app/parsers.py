@@ -8,7 +8,7 @@ def _parse_text(file_bytes: bytes) -> str:
 
 
 def _parse_pdf(file_bytes: bytes) -> str:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz
     text_parts = []
     with fitz.open(stream=file_bytes, filetype="pdf") as doc:
         for page in doc:

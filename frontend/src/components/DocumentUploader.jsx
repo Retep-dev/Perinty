@@ -8,6 +8,8 @@ export default function DocumentUploader({
   onSelectDocument,
   onUploadSuccess,
   onClearAll,
+  onDocumentsChange,
+  revision,
 }) {
   const [dragActive, setDragActive] = useState(false)
   const [file, setFile] = useState(null)
@@ -21,9 +23,14 @@ export default function DocumentUploader({
 
   useEffect(() => {
     fetchDocuments()
-  }, [backendUrl, userId])
+  }, [backendUrl, userId, revision])
 
   const fetchDocuments = async () => {
+    if (!userId.trim()) {
+      setDocuments([])
+      onDocumentsChange(0)
+      return
+    }
     setLoadingDocs(true)
     try {
       const url = userId
@@ -39,10 +46,7 @@ export default function DocumentUploader({
         const data = await response.json()
         const fetchedDocs = data.documents || []
         setDocuments(fetchedDocs)
-        // Automatically select the latest uploaded document if none selected
-        if (!activeDocument && fetchedDocs.length > 0 && onSelectDocument) {
-          onSelectDocument(fetchedDocs[0].file_name)
-        }
+        onDocumentsChange(fetchedDocs.filter((doc) => !doc.needs_reindex).length)
       }
     } catch (err) {
       console.error('Failed to fetch documents', err)
@@ -77,6 +81,11 @@ export default function DocumentUploader({
   }
 
   const uploadFile = async (selectedFile) => {
+    if (!userId.trim() || selectedFile.size > 4000000) {
+      setStatus('error')
+      setMessage(!userId.trim() ? 'Enter a demo User ID before uploading.' : 'File exceeds the 4 MB upload limit. Split it into smaller files.')
+      return
+    }
     const fileExtension = selectedFile.name.substring(selectedFile.name.lastIndexOf('.')).toLowerCase()
 
     if (!validExtensions.includes(fileExtension)) {
@@ -273,6 +282,7 @@ export default function DocumentUploader({
                     <FileText size={14} className={isSelected ? 'text-indigo-400 shrink-0' : 'text-slate-500 shrink-0'} />
                     <span className="truncate" title={doc.file_name}>
                       {doc.file_name}
+                      {doc.needs_reindex ? ' (re-upload required)' : ''}
                     </span>
                     <span className="text-[10px] uppercase text-slate-500 border border-slate-700 px-1 rounded shrink-0">
                       {doc.file_type}

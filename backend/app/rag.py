@@ -3,7 +3,7 @@ import json
 import time
 import uuid
 from typing import List, Dict, Any, Generator, Optional, Callable
-from app.config import (
+from .config import (
     NVIDIA_API_KEY,
     SUPABASE_URL,
     SUPABASE_KEY,
@@ -12,8 +12,12 @@ from app.config import (
     LANGFUSE_PUBLIC_KEY,
     LANGFUSE_SECRET_KEY,
     LANGFUSE_HOST,
+    NVIDIA_LLM_MODEL,
+    NVIDIA_EMBEDDING_MODEL,
+    MAX_DOCUMENT_CHUNKS,
+    EMBEDDING_DIMENSIONS,
 )
-from app.parsers import extract_text
+from .parsers import extract_text
 from supabase import create_client, Client
 
 # Configure NVIDIA API key environment variable
@@ -42,7 +46,7 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.vector_stores.types import BasePydanticVectorStore, VectorStoreQuery, VectorStoreQueryResult
 from llama_index.core.schema import TextNode, BaseNode, MetadataMode
 from llama_index.llms.nvidia import NVIDIA
-from llama_index.embeddings.nvidia import NVIDIAEmbedding
+from .embeddings import RetrievalEmbedding
 
 # Optional Langfuse Observability Integration
 langfuse_handler = None
@@ -62,8 +66,9 @@ if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
 
 # Configure LlamaIndex global Settings
 if NVIDIA_API_KEY:
-    Settings.llm = NVIDIA(model="meta/llama-3.1-8b-instruct", api_key=NVIDIA_API_KEY)
-    Settings.embed_model = NVIDIAEmbedding(model="nvidia/nv-embedqa-e5-v5", api_key=NVIDIA_API_KEY)
+    llm_options = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}} if "nemotron-3-nano" in NVIDIA_LLM_MODEL else {}
+    Settings.llm = NVIDIA(model=NVIDIA_LLM_MODEL, api_key=NVIDIA_API_KEY, max_tokens=2048, timeout=120, max_retries=1, is_chat_model=True, additional_kwargs=llm_options)
+    Settings.embed_model = RetrievalEmbedding(model=NVIDIA_EMBEDDING_MODEL, api_key=NVIDIA_API_KEY, dimensions=EMBEDDING_DIMENSIONS, timeout=90, max_retries=1)
     print("LlamaIndex global settings configured with NVIDIA LLM and Embedding models.")
 
 
@@ -169,12 +174,18 @@ class SupabaseHTTPVectorStore(BasePydanticVectorStore):
 
         user_id = kwargs.get("user_id")
         file_name = kwargs.get("file_name")
+        if not user_id:
+            raise ValueError("user_id is required for retrieval.")
 
         def _query():
-            return supabase_client.rpc("match_documents", {
+            return supabase_client.rpc("match_documents_scoped", {
                 "query_embedding": query.query_embedding,
                 "match_threshold": 0.1,
-                "match_count": query.similarity_top_k * 6
+                "match_count": query.similarity_top_k,
+                "p_user_id": str(user_id),
+                "p_file_name": file_name if file_name and file_name != "All Documents" else None,
+                "p_embedding_model": NVIDIA_EMBEDDING_MODEL,
+                "p_dimensions": EMBEDDING_DIMENSIONS,
             }).execute()
 
         response = _execute_with_retry(_query)
@@ -184,19 +195,18 @@ class SupabaseHTTPVectorStore(BasePydanticVectorStore):
             user_str = str(user_id)
             matching_items = [
                 item for item in raw_items
-                if item.get("metadata", {}).get("user_id") == user_str
-                or item.get("user_id") == user_str
+                if (item.get("metadata") or {}).get("user_id") == user_str
+                and (item.get("metadata") or {}).get("embedding_model") == NVIDIA_EMBEDDING_MODEL
+                and (item.get("metadata") or {}).get("embedding_dimensions") == EMBEDDING_DIMENSIONS
             ]
-            if matching_items:
-                raw_items = matching_items
+            raw_items = matching_items
 
         if file_name and file_name != "All Documents":
             doc_matched_items = [
                 item for item in raw_items
                 if item.get("metadata", {}).get("file_name") == file_name
             ]
-            if doc_matched_items:
-                raw_items = doc_matched_items
+            raw_items = doc_matched_items
 
         raw_items = raw_items[:query.similarity_top_k]
 
@@ -254,7 +264,7 @@ def ingest_document(file_name: str, file_type: str, text_content: str, user_id: 
     if not NVIDIA_API_KEY:
         raise ValueError("NVIDIA_API_KEY is not set. Cannot run embedding pipeline.")
 
-    metadata = {"file_name": file_name, "file_type": file_type}
+    metadata = {"file_name": file_name, "file_type": file_type, "embedding_model": NVIDIA_EMBEDDING_MODEL, "embedding_dimensions": EMBEDDING_DIMENSIONS}
     if user_id:
         metadata["user_id"] = str(user_id)
 
@@ -270,6 +280,8 @@ def ingest_document(file_name: str, file_type: str, text_content: str, user_id: 
     # 3. Split document into nodes
     parser = SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     nodes = parser.get_nodes_from_documents([doc])
+    if len(nodes) > MAX_DOCUMENT_CHUNKS:
+        raise ValueError(f"Document exceeds the {MAX_DOCUMENT_CHUNKS}-chunk limit. Split it into smaller files.")
 
     # Propagate metadata to nodes
     for node in nodes:
@@ -293,7 +305,9 @@ def list_documents(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     if not supabase_client:
         raise ValueError("Supabase client is not initialized.")
 
-    response = supabase_client.table("documents").select("metadata").execute()
+    if not user_id:
+        return []
+    response = supabase_client.table("documents").select("metadata").eq("metadata->>user_id", str(user_id)).execute()
     user_str = str(user_id) if user_id else None
     docs = {}
 
@@ -304,9 +318,11 @@ def list_documents(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         file_type = meta.get("file_type", "unknown")
 
         # Match user_id OR default/legacy uploaded documents
-        if not user_str or doc_user == user_str or doc_user in ("default_user", None, "", "all_users"):
+        if doc_user == user_str:
             if file_name and file_name not in docs:
-                docs[file_name] = {"file_name": file_name, "file_type": file_type}
+                docs[file_name] = {"file_name": file_name, "file_type": file_type, "needs_reindex": True}
+            if file_name and meta.get("embedding_model") == NVIDIA_EMBEDDING_MODEL and meta.get("embedding_dimensions") == EMBEDDING_DIMENSIONS:
+                docs[file_name]["needs_reindex"] = False
 
     return list(docs.values())
 
@@ -319,17 +335,21 @@ def delete_document(file_name: str, user_id: Optional[str] = None) -> Dict[str, 
         raise ValueError("Supabase client is not initialized.")
 
     try:
-        supabase_client.table("documents").delete().eq("metadata->>file_name", file_name).execute()
+        if not user_id or not user_id.strip():
+            raise ValueError("user_id is required for deletion.")
+        supabase_client.table("documents").delete().eq("metadata->>file_name", file_name).eq("metadata->>user_id", str(user_id)).execute()
         reinit_index()
         return {"status": "success", "message": f"Deleted '{file_name}'"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        raise RuntimeError("Document deletion failed.") from e
 
 
 def clear_storage(user_id: Optional[str] = None) -> Dict[str, Any]:
     """
     Deletes records from vector store for user_id (or all if not specified).
     """
+    if not user_id or not user_id.strip():
+        raise ValueError("user_id is required to clear storage.")
     if supabase_client:
         try:
             q = supabase_client.table("documents").delete()
@@ -339,7 +359,7 @@ def clear_storage(user_id: Optional[str] = None) -> Dict[str, Any]:
                 q = q.neq("id", "00000000-0000-0000-0000-000000000000")
             q.execute()
         except Exception as e:
-            return {"status": "error", "message": f"Supabase failed: {str(e)}"}
+            raise RuntimeError("Failed to clear storage.") from e
 
     reinit_index()
     return {"status": "success", "message": "Cleared storage archive."}
@@ -362,11 +382,11 @@ def get_chat_history(user_id: str, session_id: str, limit: int = 10) -> List[Dic
             .select("*")
             .eq("user_id", str(user_id))
             .eq("session_id", str(session_id))
-            .order("created_at", desc=False)
+            .order("created_at", desc=True)
             .limit(limit)
             .execute()
         )
-        return response.data
+        return list(reversed(response.data or []))
     except Exception as e:
         print(f"Failed to load chat history: {e}")
         return []
@@ -383,6 +403,7 @@ def get_user_sessions(user_id: str) -> List[Dict[str, Any]]:
         response = (
             supabase_client.table("chat_messages")
             .select("session_id, content, created_at, role, user_id")
+            .eq("user_id", str(user_id))
             .order("created_at", desc=True)
             .execute()
         )
@@ -394,7 +415,7 @@ def get_user_sessions(user_id: str) -> List[Dict[str, Any]]:
             row_user = row.get("user_id")
 
             # Match user_id OR default/legacy chat sessions
-            if not user_str or row_user == user_str or row_user in ("default_user", None, "", "all_users"):
+            if row_user == user_str:
                 if sid and sid not in sessions:
                     content_snippet = row.get("content", "")[:60]
                     sessions[sid] = {
@@ -431,6 +452,7 @@ def save_chat_message(
         }).execute()
     except Exception as e:
         print(f"Failed to save chat message: {e}")
+        raise RuntimeError("Conversation could not be saved.") from e
 
 
 def get_admin_analytics(user_id: Optional[str] = None) -> Dict[str, Any]:
@@ -447,7 +469,7 @@ def get_admin_analytics(user_id: Optional[str] = None) -> Dict[str, Any]:
 
     try:
         # 1. Total Chunks & Documents
-        doc_res = supabase_client.table("documents").select("id, metadata").execute()
+        doc_res = supabase_client.table("documents").select("id, metadata").eq("metadata->>user_id", str(user_id)).execute()
         
         total_chunks = 0
         distinct_docs = set()
@@ -459,7 +481,7 @@ def get_admin_analytics(user_id: Optional[str] = None) -> Dict[str, Any]:
             fname = meta.get("file_name")
 
             # Match user_id OR default/legacy uploaded documents
-            if not user_str or doc_user == user_str or doc_user in ("default_user", None, "", "all_users"):
+            if doc_user == user_str:
                 if fname:
                     distinct_docs.add(fname)
                     total_chunks += 1
@@ -467,12 +489,12 @@ def get_admin_analytics(user_id: Optional[str] = None) -> Dict[str, Any]:
         total_documents = len(distinct_docs)
 
         # 2. Total Chat Messages & Sessions
-        msg_res = supabase_client.table("chat_messages").select("id, session_id, user_id").execute()
+        msg_res = supabase_client.table("chat_messages").select("id, session_id, user_id").eq("user_id", str(user_id)).execute()
         
         filtered_msgs = []
         for m in (msg_res.data or []):
             m_user = m.get("user_id")
-            if not user_str or m_user == user_str or m_user in ("default_user", None, ""):
+            if m_user == user_str:
                 filtered_msgs.append(m)
 
         total_messages = len(filtered_msgs)
@@ -492,7 +514,7 @@ def get_admin_analytics(user_id: Optional[str] = None) -> Dict[str, Any]:
             "total_chunks": 0,
             "total_messages": 0,
             "active_sessions": 0,
-            "error": str(e)
+            "error": "Analytics are temporarily unavailable."
         }
 
 
@@ -530,9 +552,6 @@ def generate_streaming_response(
     if not session_id:
         session_id = str(uuid.uuid4())
 
-    # Save user message
-    save_chat_message(user_id, session_id, "user", query_text)
-
     try:
         idx = get_index()
 
@@ -550,6 +569,7 @@ def generate_streaming_response(
         # Load prior conversation context
         history = get_chat_history(user_id, session_id, limit=10)
         memory_prefix = _build_memory_prefix(history)
+        save_chat_message(user_id, session_id, "user", query_text)
 
         system_prompt = (
             "You are an expert customer support AI assistant. Answer the user query using ONLY the provided sources. "
@@ -557,14 +577,14 @@ def generate_streaming_response(
             "If the references are empty or the answer cannot be found in them, say: "
             "I don't have information about that in the uploaded documents. " 
             "Keep your tone helpful, technical, and professional.\n\n"
-            f"{memory_prefix}"
+            "{conversation_history}"
             "Here are the references:\n"
             "{context_str}\n\n"
             "Query: {query_str}\n"
             "Answer:"
         )
 
-        qa_template = PromptTemplate(system_prompt)
+        qa_template = PromptTemplate(system_prompt).partial_format(conversation_history=memory_prefix)
 
         # Create query engine with user_id & file_name kwargs filter for SupabaseHTTPVectorStore
         query_engine = idx.as_query_engine(
@@ -575,11 +595,21 @@ def generate_streaming_response(
         )
 
         # Execute query and stream text chunks
-        response = query_engine.query(query_text)
         full_response = ""
-        for token in response.response_gen:
-            full_response += token
-            yield token
+        for attempt in range(3):
+            try:
+                response = query_engine.query(query_text)
+                for token in response.response_gen:
+                    full_response += token
+                    yield token
+                break
+            except Exception as exc:
+                # NIM can send capacity errors inside an HTTP-200 SSE stream.
+                # Retry only before answer text, so users never see duplicate text.
+                capacity_error = "ResourceExhausted" in str(exc) or getattr(exc, "status_code", None) == 429
+                if full_response or not capacity_error or attempt == 2:
+                    raise
+                time.sleep(2 ** (attempt + 1))
 
         # Compile references from retrieved source nodes
         sources = []
@@ -595,12 +625,17 @@ def generate_streaming_response(
             })
 
         # Append source metadata at the end (separated by custom delimiter)
+        # Save assistant message
+        save_chat_message(user_id, session_id, "assistant", full_response, sources)
         yield "|||SOURCES|||"
         yield json.dumps(sources)
 
-        # Save assistant message
-        save_chat_message(user_id, session_id, "assistant", full_response, sources)
-
     except Exception as e:
-        error_msg = f"Error during streaming generation: {str(e)}"
+        # Log diagnostics only on the server, with configured credentials removed.
+        detail = str(e)
+        for secret in (NVIDIA_API_KEY, SUPABASE_KEY):
+            if secret:
+                detail = detail.replace(secret, "[redacted]")
+        print(f"Streaming generation failed: {type(e).__name__}: {detail}", flush=True)
+        error_msg = "\nThe response could not be completed. Please try again."
         yield error_msg

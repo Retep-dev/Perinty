@@ -1,0 +1,14 @@
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+python-dotenv==1.2.3
+supabase==2.31.0
+llama-index-core==0.14.25
+llama-index-llms-nvidia==0.6.0
+llama-index-embeddings-nvidia==0.6.0
+pymupdf==1.28.2
+python-docx==1.2.0
+beautifulsoup4==4.15.0
+pandas==3.0.6
+langfuse==2.60.10
+llama-index-callbacks-langfuse==0.6.0

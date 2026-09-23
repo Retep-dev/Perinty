@@ -1,163 +1,72 @@
-# Perinty - Enterprise Multi-Tenant SaaS Document Q&A (RAG) System
+# Perinty — Document Q&A Demo
 
-**Perinty** is a production-ready, full-stack Retrieval-Augmented Generation (RAG) SaaS platform designed for document-grounded AI customer support. Built with modern web aesthetics, Supabase `pgvector` multi-tenancy, NVIDIA NIM microservices, LlamaIndex orchestration, and Langfuse observability.
+Perinty is a React + FastAPI document-grounded chat application. It extracts text
+from PDF, DOCX, TXT, Markdown, HTML, CSV, and JSON, stores chunks and NVIDIA
+embeddings in Supabase, and streams answers with source references. Conversation
+history, sessions, document selection, analytics, and light/dark themes are included.
 
----
+**Demo identity only:** the current API trusts a supplied user ID. It does not
+verify passwords or Supabase Auth tokens. Anyone who knows a user ID can access
+its data. Use non-sensitive demo documents; this is not production authentication.
 
-## 🌟 Tech Stack & Infrastructure
+## Structure
 
-### **Frontend**
-- **Framework**: React 18, Vite 5, TailwindCSS 3
-- **Design System**: Vanilla CSS Glassmorphism with HSL tailored dark & light modes
-- **Icons & UI**: Lucide React
+- `frontend/`: React 18, Vite 5, Tailwind CSS, Lucide icons.
+- `backend/app/main.py`: FastAPI routes and upload limits.
+- `backend/app/rag.py`: LlamaIndex retrieval, ingestion, streaming, history, analytics.
+- `backend/app/parsers.py`: in-memory document extraction.
+- `backend/app/embeddings.py`: NVIDIA query-mode compatibility fix.
+- `backend/supabase_migrations/`: vector tables, chat history, scoped retrieval/RLS.
+- `index.py`: Vercel entrypoint exposing the backend under `/api`.
 
-### **Backend & AI Engine**
-- **API Framework**: FastAPI, Pydantic, Uvicorn
-- **Orchestration**: LlamaIndex Framework
-- **LLM Model**: NVIDIA NIM (`meta/llama-3.1-8b-instruct`)
-- **Embedding Model**: NVIDIA NIM (`nvidia/nv-embedqa-e5-v5`, 1024-dimensional)
-- **Document Parsers**: PyPDF, python-docx, BeautifulSoup4, CSV/JSON extractors
+## Local setup
 
-### **Database & Vector Search**
-- **Database**: Supabase PostgreSQL
-- **Vector Extension**: `pgvector` with **HNSW Indexing** (`vector_cosine_ops`)
-- **Multi-Tenancy**: Row-Level Security (RLS) policies scoped by `user_id`
-
-### **Observability & CI/CD**
-- **Monitoring**: Langfuse LLM Observability & Telemetry Tracing
-- **CI/CD Pipeline**: GitHub Actions (`.github/workflows/ci-cd.yml`) verifying Python backend syntax and React Vite production builds
-
----
-
-## 🚀 Key Features
-
-1. **Multi-Format Document Ingestion**:
-   - Upload and index `.txt`, `.md`, `.json`, `.pdf`, `.docx`, `.html`, and `.csv` files.
-   - Automatic sentence splitting (`chunk_size=512`, `chunk_overlap=64`) and embedding generation.
-
-2. **Supabase `pgvector` HNSW Vector Search**:
-   - High-precision similarity search using HNSW indexing for ~100% recall regardless of dataset size.
-
-3. **Multi-Tenancy & Data Isolation**:
-   - Supabase Row-Level Security (RLS) policies isolate knowledge bases, vector embeddings, and chat histories per tenant/user ID.
-
-4. **Interactive Document Selection**:
-   - Select specific indexed documents from the sidebar to scope chat queries, or select **All Documents (Global Search)**.
-
-5. **Conversational Memory & Past Session History**:
-   - Persistent per-user chat memory.
-   - **Recent Sessions (🕒)** dropdown selector to switch between past conversations.
-   - **New Chat (+)** button to start clean threads without logging out.
-
-6. **Real-Time Token Streaming with Source Citations**:
-   - Streaming LLM token delivery with isolated source snippet cards.
-
-7. **SaaS Admin Analytics Dashboard**:
-   - Real-time telemetry monitoring for **Total Documents**, **Vector Chunks**, **Chat Turns**, and **Active Sessions**.
-
-8. **Theme Customization (Dark & Light Mode)**:
-   - Instant theme toggle with high-contrast typography, crisp glassmorphism cards, and `localStorage` state persistence.
-
----
-
-## 🛠️ Installation & Setup Guide
-
-### **1. Prerequisites**
-- Python 3.10+
-- Node.js 18+ & npm
-- Supabase PostgreSQL Account with `pgvector` extension enabled
-- NVIDIA Developer API Key (`NVIDIA_API_KEY`)
-
----
-
-### **2. Backend Setup**
+Use Python 3.12 and Node.js 22 or newer.
 
 ```powershell
-# Navigate to backend directory
-cd backend
-
-# Create and activate virtual environment
-python -m venv venv
-.\venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements.txt
+# Copy backend/.env.example to backend/.env and provide server credentials.
+.\.venv\Scripts\python -m uvicorn backend.app.main:app --reload --port 8000
 ```
 
-#### **Environment Variables Configuration**
-Create a `.env` file inside the `backend/` directory:
-
-```env
-NVIDIA_API_KEY=your_nvidia_api_key_here
-SUPABASE_URL=https://your-supabase-project.supabase.co
-SUPABASE_KEY=your_supabase_anon_or_service_role_key
-
-# Optional Langfuse Monitoring
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://cloud.langfuse.com
-```
-
-#### **Database Migrations**
-Execute the SQL migration scripts in your Supabase SQL Editor in sequence:
-1. `backend/supabase_migrations/001_documents.sql` (Tables & HNSW vector index)
-2. `backend/supabase_migrations/002_chat_messages.sql` (Chat history table)
-3. `backend/supabase_migrations/003_auth_and_rls.sql` (RLS policies & multi-tenant RPCs)
-
-#### **Start Backend Server**
-```powershell
-uvicorn app.main:app --reload --port 8000
-```
-- API will be accessible at: `http://localhost:8000`
-- API documentation: `http://localhost:8000/docs`
-
----
-
-### **3. Frontend Setup**
+In another terminal:
 
 ```powershell
-# Navigate to frontend directory
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start Vite dev server
-npm run dev
+npm --prefix frontend ci
+npm --prefix frontend run dev
 ```
-- Web application will be accessible at: `http://localhost:3000`
 
----
+Open http://localhost:3000 for the landing page, or http://localhost:3000/app
+for the document workspace. Vite proxies `/api` to FastAPI on port 8000.
+For a new database, run migrations 001, 002, and 004. Existing installations can
+apply 004 after their existing migrations. Older embedding models have been retired;
+files indexed with them must be re-uploaded for the new model.
 
-## 📡 API Reference
+## API
 
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `POST /upload` | `POST` | Ingests `.pdf`, `.docx`, `.csv`, etc., into vector store with `X-User-ID` |
-| `GET /documents` | `GET` | Lists distinct source documents uploaded for the target user |
-| `DELETE /documents/{file_name}` | `DELETE` | Deletes a document and its vector chunks |
-| `POST /chat` | `POST` | Streams RAG answers with persistent memory & document scoping |
-| `GET /chat/history/{user_id}` | `GET` | Retrieves past message turns for a user and session |
-| `GET /chat/sessions/{user_id}` | `GET` | Lists all past distinct conversation sessions for a user |
-| `GET /analytics` | `GET` | Fetches SaaS telemetry metrics (Documents, Chunks, Messages, Sessions) |
-| `POST /clear` | `POST` | Clears vector store data for the tenant |
+Locally these are backend root paths; on Vercel prefix them with `/api`.
 
----
+| Route | Purpose |
+| --- | --- |
+| `POST /upload` | Parse and index a file for a required demo user ID |
+| `GET /documents` | List that identity's documents |
+| `DELETE /documents/{file_name}` | Delete only that identity's matching file chunks |
+| `POST /chat` | Stream an answer and JSON source trailer |
+| `GET /chat/history/{user_id}` | Latest messages in chronological order |
+| `GET /chat/sessions/{user_id}` | List conversation sessions |
+| `GET /analytics` | Usage counters for the supplied user ID |
+| `POST /clear` | Clear only the supplied identity's chunks |
 
-## 🧪 Verification & Quality Assurance
+## Verification and deployment
 
-- **Backend Syntax Validation**:
-  ```powershell
-  python -m py_compile app/main.py app/rag.py app/parsers.py app/config.py
-  ```
-- **Frontend Production Build**:
-  ```powershell
-  npm run build
-  ```
-- **CI/CD Pipeline**:
-  Automated via `.github/workflows/ci-cd.yml` on every push to `main`.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the one-project Vercel architecture,
+complete environment-variable inventory, database prerequisites, runtime/upload
+limits, security limitations, and local/live verification commands.
 
----
+```powershell
+.\.venv\Scripts\python -m unittest discover -s backend/tests -v
+npm --prefix frontend run build
+```
 
-## 📄 License
-Created by **Afolabi Peter** for Enterprise RAG Showcase.
+Created by Afolabi Peter.

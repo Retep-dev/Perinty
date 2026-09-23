@@ -2,9 +2,7 @@ import React, { useState } from 'react'
 import { X, LogIn, UserPlus, Lock, Mail, ShieldCheck } from 'lucide-react'
 
 export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
-  const [isSignUp, setIsSignUp] = useState(false)
   const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -12,8 +10,8 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    if (!email.trim() || !password.trim()) {
-      setError('Please fill in all fields.')
+    if (!email.trim()) {
+      setError('Please enter a demo identity.')
       return
     }
 
@@ -34,7 +32,7 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
       onClose()
     } catch (err) {
       console.error(err)
-      setError('Authentication failed. Please try again.')
+      setError('Could not save the demo identity. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -69,13 +67,13 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 text-indigo-400 font-semibold text-xs uppercase tracking-wider">
             <ShieldCheck size={16} />
-            <span>Perinty SaaS Multi-Tenancy</span>
+            <span>Perinty Demo Identity</span>
           </div>
           <h2 className="text-xl font-bold font-outfit text-slate-100">
-            {isSignUp ? 'Create your Account' : 'Sign In to Perinty'}
+            Choose a Demo Identity
           </h2>
           <p className="text-xs text-slate-400">
-            Securely isolate your document knowledge base and chat history.
+            This is not authentication. Anyone who knows a User ID can access its data. Use only non-sensitive demo documents.
           </p>
         </div>
 
@@ -101,27 +99,13 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
             />
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
-              <Lock size={12} className="text-indigo-400" />
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="bg-slate-950/80 border border-slate-800 focus:border-indigo-500/50 rounded-xl px-3.5 py-2.5 text-sm text-slate-100 placeholder-slate-600 focus:outline-none"
-            />
-          </div>
-
           <button
             type="submit"
             disabled={loading}
             className="w-full mt-2 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20"
           >
-            {isSignUp ? <UserPlus size={16} /> : <LogIn size={16} />}
-            <span>{loading ? 'Authenticating...' : isSignUp ? 'Create Account' : 'Sign In'}</span>
+            <LogIn size={16} />
+            <span>{loading ? 'Saving...' : 'Use Demo Identity'}</span>
           </button>
         </form>
 
@@ -137,17 +121,6 @@ export default function AuthModal({ isOpen, onClose, onAuthSuccess }) {
         >
           <span>Continue as Guest User</span>
         </button>
-
-        {/* Toggle Mode */}
-        <div className="text-center text-xs text-slate-400">
-          {isSignUp ? 'Already have an account?' : "Don't have an account?"}{' '}
-          <button
-            onClick={() => setIsSignUp(!isSignUp)}
-            className="text-indigo-400 hover:underline font-semibold ml-1"
-          >
-            {isSignUp ? 'Sign In' : 'Sign Up'}
-          </button>
-        </div>
 
       </div>
     </div>

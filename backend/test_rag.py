@@ -1,19 +1,14 @@
-import dotenv
-dotenv.load_dotenv()
-from app.rag import ingest_document, generate_streaming_response, clear_storage
+"""Opt-in live test. Uses unique fixtures, never clears existing user data."""
+import os
+import unittest
 
-print("Clearing storage...")
-clear_storage()
 
-print("Ingesting test document...")
-with open("test_kb.txt", "r") as f:
-    text = f.read()
+@unittest.skipUnless(os.getenv("RUN_LIVE_RAG_TEST") == "1", "Set RUN_LIVE_RAG_TEST=1 and PERINTY_TEST_URL to test live services")
+class LiveRAGTest(unittest.TestCase):
+    def test_complete_flow(self):
+        from scripts.smoke_test import run
+        run(os.environ["PERINTY_TEST_URL"])
 
-res = ingest_document("test_kb.txt", ".txt", text)
-print("Ingestion Result:", res)
 
-print("Querying RAG...")
-response_gen = generate_streaming_response("What is Perinty?", user_id="test_user", session_id="test_session")
-for chunk in response_gen:
-    print(chunk, end="")
-print("\nDone!")
+if __name__ == "__main__":
+    unittest.main()

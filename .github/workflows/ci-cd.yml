@@ -19,10 +19,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'
           cache: 'pip'
 
       - name: Install Backend Dependencies
@@ -33,6 +33,11 @@ jobs:
       - name: Check Backend Syntax & Imports
         run: |
           python -m py_compile app/main.py app/rag.py app/parsers.py app/config.py
+      - name: Regression tests and ASGI imports
+        working-directory: .
+        run: |
+          python -m unittest discover -s backend/tests -v
+          python -m unittest backend.test_rag -v
 
   frontend-ci:
     name: Frontend CI (React & Vite Build)
@@ -56,4 +61,6 @@ jobs:
         run: npm ci
 
       - name: Build Frontend Assets
-        run: npm run build
+        run: |
+          npm test
+          npm run build
